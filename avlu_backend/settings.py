@@ -11,6 +11,11 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
+import os
+from dotenv import load_dotenv
+
+# .env dosyasını yükle (Sistemdeki gizli değişkenleri okur)
+load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -20,12 +25,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-*@%(4t!5ag(s^#+3$5i(4=fxjiwf^irmc^pe(($$v&t+$cp5$k'
+# Gizli anahtar artık kod içinde değil, .env dosyasından okunuyor
+SECRET_KEY = os.getenv('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# .env dosyasındaki ayara göre True veya False olur
+DEBUG = os.getenv('DEBUG') == 'True'
 
-ALLOWED_HOSTS = []
+# İzin verilen host adreslerini virgülden ayırarak listeye çevirir
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
 
 
 # Application definition
@@ -37,7 +45,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'core',
+    'core',  # Sizin uygulamanız
 ]
 
 MIDDLEWARE = [
@@ -103,7 +111,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = 'tr'  # tr-tr de olabilir
+LANGUAGE_CODE = 'tr'
 
 TIME_ZONE = 'Europe/Istanbul'
 
@@ -116,3 +124,24 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# --- GÜVENLİK VE GİRİŞ YÖNLENDİRMELERİ ---
+
+# Giriş yapmamış kullanıcılar özel tasarladığımız giriş sayfasına yönlendirilir
+LOGIN_URL = 'login'
+
+# Giriş başarılı olduğunda gidilecek ana sayfa
+LOGIN_REDIRECT_URL = 'ana_sayfa'
+
+# Çıkış yapıldığında tekrar giriş ekranına dönülür
+LOGOUT_REDIRECT_URL = 'login'
+
+# ... (Mevcut kodların en altı) ...
+
+# --- E-POSTA AYARLARI (Yedekleme İçin) ---
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'  # Gmail kullanıyorsanız
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = os.getenv('EMAIL_USER')      # .env dosyasından okunacak
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_PASSWORD') # .env dosyasından okunacak

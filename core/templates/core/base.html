@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+{% load static %} <!DOCTYPE html>
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
@@ -44,9 +44,20 @@
                 🏢 Avlu Personel
             </a>
 
-            <a href="/admin/" class="btn btn-sm btn-light text-primary fw-bold shadow-sm d-flex align-items-center gap-1">
-                <span>🔒</span> 
-                <span class="d-none d-sm-inline">Yönetici</span> </a>
+            <div class="d-flex gap-2">
+                {% if user.is_staff %}
+                <a href="/admin/" class="btn btn-sm btn-outline-light fw-bold d-flex align-items-center gap-1">
+                    <span>🔧</span> <span class="d-none d-sm-inline">Yönetici</span>
+                </a>
+                {% endif %}
+
+                <form action="{% url 'logout' %}" method="post">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-light text-primary fw-bold d-flex align-items-center gap-1">
+                        <span>🚪</span> <span class="d-none d-sm-inline">Çıkış</span>
+                    </button>
+                </form>
+            </div>
         </div>
     </nav>
 
@@ -83,5 +94,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script src="{% static 'js/csrf.js' %}"></script>
 </body>
 </html>

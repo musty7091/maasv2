@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils import timezone
-from datetime import timedelta, datetime
+from django.contrib.auth.models import User  # <-- EKLENDİ
+from datetime import timedelta, datetime       # <-- EKLENDİ (Puantaj hesabı için gerekli)
 import math
 
 class Personel(models.Model):
@@ -73,7 +74,7 @@ class FinansalHareket(models.Model):
         ('basit_avans', 'Basit Avans (Kesinti)'),
         ('kasa_acigi', 'Kasa Açığı (Kesinti)'),
         ('alisveris', 'Alışveriş/Yeme-İçme (Kesinti)'),
-        ('prim', 'Prim / Bonus (MAAŞA EKLENİR)'), # <-- YENİ EKLENDİ
+        ('prim', 'Prim / Bonus (MAAŞA EKLENİR)'),
     )
 
     personel = models.ForeignKey(Personel, on_delete=models.CASCADE, related_name='finansal_hareketler')
@@ -93,7 +94,7 @@ class FinansalHareket(models.Model):
 class Puantaj(models.Model):
     DURUMLAR = (
         ('geldi', 'Geldi (Normal)'),
-        ('hafta_tatili', 'Hafta Tatili Çalışması (Tüm Saatler Mesai)'), # <-- YENİ EKLENDİ
+        ('hafta_tatili', 'Hafta Tatili Çalışması (Tüm Saatler Mesai)'),
         ('gelmedi', 'Gelmedi'),
         ('izinli', 'İzinli (Ücretli)'),
         ('ucretsiz_izin', 'Ücretsiz İzin'),
@@ -126,7 +127,7 @@ class Puantaj(models.Model):
             try:
                 self.giris_saati = datetime.strptime(self.giris_saati, '%H:%M').time()
             except ValueError:
-                self.giris_saati = None # Hatalı format varsa boşalt
+                self.giris_saati = None
 
         if self.cikis_saati and isinstance(self.cikis_saati, str):
             try:
@@ -137,14 +138,12 @@ class Puantaj(models.Model):
         self.hesaplanan_mesai_saati = 0
 
         # 2. Hesaplama Mantığı
-        # 'geldi' veya 'hafta_tatili' durumlarında hesaplama yapılır
         if (self.durum == 'geldi' or self.durum == 'hafta_tatili') and self.giris_saati and self.cikis_saati:
             # Saat farkını hesapla
             giris = datetime.combine(self.tarih, self.giris_saati)
             cikis = datetime.combine(self.tarih, self.cikis_saati)
             
             # Eğer çıkış saati girişten küçükse (gece yarısını geçtiyse) gün ekle
-            # MANTIK HATASI DÜZELTİLDİ: Bu blok zaten vardı ancak tam çalıştığından emin olduk.
             if cikis < giris:
                 cikis += timedelta(days=1)
             
@@ -161,8 +160,6 @@ class Puantaj(models.Model):
                 standart_saat = self.personel.gunluk_calisma_saati
                 fark_saat = calisilan_saat - standart_saat
                 
-                # Eksi veya Artı olması fark etmez, yuvarlama kuralı aynıdır
-                # (Mutlak değer üzerinden hesaplayıp işareti sonradan koyuyoruz)
                 is_negative = fark_saat < 0
                 abs_fark = abs(fark_saat)
                 
@@ -173,11 +170,11 @@ class Puantaj(models.Model):
                 
                 # Senin belirlediğin kurallar:
                 if dakika_kismi <= 15:
-                    eklenen_mesai = 0 # İlk 15 dk ücretsiz
+                    eklenen_mesai = 0 
                 elif 16 <= dakika_kismi <= 45:
-                    eklenen_mesai = 0.5 # Yarım saat yazılır
+                    eklenen_mesai = 0.5 
                 elif dakika_kismi >= 46:
-                    eklenen_mesai = 1.0 # Tam saat yazılır (bir sonraki saate yuvarlanır)
+                    eklenen_mesai = 1.0 
                 
                 sonuc_saat = tam_saat + eklenen_mesai
 
@@ -188,3 +185,68 @@ class Puantaj(models.Model):
                 self.hesaplanan_mesai_saati = sonuc_saat
             
         super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"{self.personel} - {self.tarih} - {self.durum}"
+
+
+class MaasBordrosu(models.Model):
+    """
+    Ay sonunda hesaplanan maaşların sabitlenmiş (snapshot) halidir.
+    Personel maaşı değişse bile buradaki kayıt değişmez.
+    """
+    personel = models.ForeignKey(Personel, on_delete=models.PROTECT, verbose_name="Personel")
+    donem = models.DateField(verbose_name="Dönem (Her ayın 1'i)") # Ör: 01.10.2025
+    
+    # O anki maaş bilgisi (Snapshot)
+    brut_maas = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="O Ayki Maaş/Yevmiye")
+    
+    # Hesaplanan Değerler
+    calistigi_gun = models.IntegerField(default=0, verbose_name="Çalıştığı Gün")
+    gelmedigi_gun = models.IntegerField(default=0, verbose_name="Gelmediği Gün")
+    mesai_saati = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name="Mesai Saati")
+    mesai_ucreti = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Mesai Ücreti")
+    
+    toplam_prim = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Toplam Prim")
+    toplam_kesinti = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Toplam Kesinti")
+    
+    net_odenecek = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Net Ödenecek Tutar")
+    
+    olusturulma_tarihi = models.DateTimeField(auto_now_add=True, verbose_name="İşlem Tarihi")
+
+    class Meta:
+        verbose_name = "Maaş Bordrosu (Kesinleşmiş)"
+        verbose_name_plural = "Maaş Bordroları"
+        unique_together = ('personel', 'donem') # Bir personelin o aya ait sadece 1 bordrosu olabilir.
+
+    def __str__(self):
+        return f"{self.personel.ad} - {self.donem.strftime('%B %Y')}"
+
+# DÜZELTME: IslemLog artık MaasBordrosu'nun içinde değil, dışarıda tek başına bir sınıf.
+class IslemLog(models.Model):
+    """
+    Sistemdeki kritik işlemlerin (Ekleme, Silme, Güncelleme) kayıt altına alındığı tablodur.
+    """
+    ISLEM_TURLERI = (
+        ('ekleme', 'Ekleme'),
+        ('guncelleme', 'Güncelleme'),
+        ('silme', 'Silme'),
+        ('kritik', 'Kritik İşlem (Bordro vb.)'),
+    )
+
+    kullanici = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, verbose_name="İşlemi Yapan")
+    islem_turu = models.CharField(max_length=20, choices=ISLEM_TURLERI, verbose_name="İşlem Türü")
+    konu = models.CharField(max_length=100, verbose_name="Konu (Örn: Finansal Hareket)")
+    detay = models.TextField(verbose_name="İşlem Detayı")
+    tarih = models.DateTimeField(auto_now_add=True, verbose_name="Tarih/Saat")
+    
+    # Hangi personelle ilgili işlem yapıldı? (Opsiyonel)
+    ilgili_personel = models.ForeignKey(Personel, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="İlgili Personel")
+
+    class Meta:
+        verbose_name = "İşlem Logu"
+        verbose_name_plural = "İşlem Logları (Audit)"
+        ordering = ['-tarih'] # En yeni en üstte
+
+    def __str__(self):
+        return f"{self.kullanici} - {self.islem_turu} - {self.tarih.strftime('%d.%m.%Y %H:%M')}"

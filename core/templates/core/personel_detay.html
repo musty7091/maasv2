@@ -1,94 +1,215 @@
 {% extends 'core/base.html' %}
 
 {% block content %}
-<div class="card mb-3 shadow-sm">
-    <div class="card-body">
-        <h3 class="text-primary">{{ personel.ad }} {{ personel.soyad }}</h3>
-        <p class="mb-1"><strong>Telefon:</strong> {{ personel.telefon }}</p>
-        <p class="mb-0"><strong>Maaş Tipi:</strong> {{ personel.get_calisma_tipi_display }} ({{ personel.maas_tutari }} TL)</p>
+
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+    <a href="{% url 'personel_listesi' %}" class="btn btn-outline-secondary btn-sm fw-bold">
+        ← Personel Listesine Dön
+    </a>
+
+    <form method="GET" class="d-flex align-items-center gap-2 bg-white p-2 rounded shadow-sm border">
+        <label class="fw-bold text-muted small m-0">Dönem:</label>
         
-        <a href="{% url 'toplu_puantaj' personel.id %}" class="btn btn-primary w-100 mt-3 fw-bold">
-            📅 Aylık Toplu Giriş (Takvim)
-        </a>
+        <select name="ay" class="form-select form-select-sm" style="width: 110px;">
+            <option value="1" {% if ay == 1 %}selected{% endif %}>Ocak</option>
+            <option value="2" {% if ay == 2 %}selected{% endif %}>Şubat</option>
+            <option value="3" {% if ay == 3 %}selected{% endif %}>Mart</option>
+            <option value="4" {% if ay == 4 %}selected{% endif %}>Nisan</option>
+            <option value="5" {% if ay == 5 %}selected{% endif %}>Mayıs</option>
+            <option value="6" {% if ay == 6 %}selected{% endif %}>Haziran</option>
+            <option value="7" {% if ay == 7 %}selected{% endif %}>Temmuz</option>
+            <option value="8" {% if ay == 8 %}selected{% endif %}>Ağustos</option>
+            <option value="9" {% if ay == 9 %}selected{% endif %}>Eylül</option>
+            <option value="10" {% if ay == 10 %}selected{% endif %}>Ekim</option>
+            <option value="11" {% if ay == 11 %}selected{% endif %}>Kasım</option>
+            <option value="12" {% if ay == 12 %}selected{% endif %}>Aralık</option>
+        </select>
+
+        <input type="number" name="yil" class="form-control form-control-sm" value="{{ yil }}" style="width: 70px;">
+        
+        <button type="submit" class="btn btn-sm btn-primary fw-bold">Git</button>
+    </form>
+</div>
+
+{% if user.is_superuser %}
+    <div class="alert alert-info py-2 small shadow-sm border-info">
+        ℹ️ <strong>Yönetici Modu:</strong> Şu an <strong>{{ ay_adi }} {{ yil }}</strong> dönemine ait kayıtları görüntülüyorsunuz. (Sadece bu aya ait finansal hareketler listelenmektedir.)
+    </div>
+{% endif %}
+
+<div class="card mb-4 shadow-sm border-primary border-top-0 border-end-0 border-bottom-0 border-3">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h3 class="text-primary fw-bold mb-1">{{ personel.ad }} {{ personel.soyad }}</h3>
+                <p class="text-muted mb-0"><small>TC:</small> {{ personel.tc_no }}</p>
+            </div>
+            <div class="text-end">
+                <span class="badge bg-secondary fs-6 shadow-sm">{{ personel.get_calisma_tipi_display }}</span>
+            </div>
+        </div>
+        
+        <hr class="my-3 opacity-25">
+        
+        <div class="row g-3 align-items-end">
+            <div class="col-md-6">
+                <p class="mb-1"><strong class="text-dark">Telefon:</strong> {{ personel.telefon }}</p>
+                <p class="mb-0"><strong class="text-dark">Maaş/Yevmiye:</strong> <span class="text-success fw-bold">{{ personel.maas_tutari }} TL</span></p>
+            </div>
+            <div class="col-md-6 text-md-end">
+                <a href="{% url 'toplu_puantaj' personel.id %}?ay={{ ay }}&yil={{ yil }}" class="btn btn-primary fw-bold shadow-sm">
+                    📅 {{ ay_adi }} Ayı Puantajı (Takvim)
+                </a>
+            </div>
+        </div>
     </div>
 </div>
 
-<h5 class="mt-4 ms-1">Hızlı İşlem Ekle (Avans / Prim)</h5>
-<form method="POST" class="card p-3 bg-light mb-4 shadow-sm border-0">
-    {% csrf_token %}
-    <input type="hidden" name="basit_islem" value="1">
-    
-    <div class="mb-2">
-        <label class="form-label small fw-bold">İşlem Tipi</label>
-        {{ finans_form.islem_tipi }}
-    </div>
-    
-    <div class="row g-2">
-        <div class="col-6">
-            <label class="form-label small fw-bold">Tutar (TL)</label>
-            {{ finans_form.tutar }}
+<div class="row">
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm h-100 border-0">
+            <div class="card-header bg-dark text-white fw-bold">
+                ⚡ Hızlı İşlem Ekle
+            </div>
+            <div class="card-body bg-light">
+                <form method="POST">
+                    {% csrf_token %}
+                    <input type="hidden" name="basit_islem" value="1">
+                    
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-muted">İşlem Tipi</label>
+                        {{ finans_form.islem_tipi }}
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-muted">Tutar (TL)</label>
+                        {{ finans_form.tutar }}
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-muted">Açıklama</label>
+                        {{ finans_form.aciklama }}
+                    </div>
+
+                    <div class="d-none">
+                        {{ finans_form.personel }}
+                    </div>
+
+                    <button type="submit" class="btn btn-dark w-100 fw-bold shadow-sm">
+                        💾 Kaydet
+                    </button>
+                    <div class="text-center mt-2">
+                         <small class="text-muted" style="font-size: 0.75rem;">*İşlem seçili olan <strong>{{ ay_adi }} {{ yil }}</strong> dönemine kaydedilir.</small>
+                    </div>
+                </form>
+            </div>
         </div>
-        <div class="col-6">
-            <label class="form-label small fw-bold">Açıklama</label>
-            {{ finans_form.aciklama }}
-        </div>
     </div>
 
-    <div class="d-none">
-        {{ finans_form.personel }}
-    </div>
-
-    <button type="submit" class="btn btn-dark w-100 mt-3">Kaydet</button>
-</form>
-
-<h5 class="ms-1">Son Finansal Hareketler</h5>
-<ul class="list-group shadow-sm">
-    {% for h in hareketler %}
-    <li class="list-group-item d-flex justify-content-between align-items-center">
-        <div>
-            <span class="fw-bold 
-                {% if h.islem_tipi == 'prim' %} text-primary 
-                {% else %} text-dark {% endif %}">
-                {{ h.get_islem_tipi_display }}
-            </span>
-            <br>
-            <small class="text-muted" style="font-size: 0.8rem;">
-                {{ h.tarih|date:"d M Y" }} 
-                {% if h.aciklama %} - {{ h.aciklama }}{% endif %}
-            </small>
+    <div class="col-md-8 mb-4">
+        <div class="card shadow-sm h-100 border-0">
+            <div class="card-header bg-secondary text-white fw-bold d-flex justify-content-between align-items-center">
+                <span>📊 {{ ay_adi }} Dönemi Hareketleri</span>
+                <span class="badge bg-light text-dark">{{ hareketler.count }} İşlem</span>
+            </div>
+            
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Tarih</th>
+                            <th>İşlem</th>
+                            <th>Tutar</th>
+                            <th>Açıklama</th>
+                            <th style="width: 50px;"></th> </tr>
+                    </thead>
+                    <tbody>
+                        {% for h in hareketler %}
+                        <tr>
+                            <td class="text-nowrap small">{{ h.tarih|date:"d.m.Y" }}</td>
+                            <td>
+                                {% if h.islem_tipi == 'maas_odemesi' %}
+                                    <span class="badge bg-success">Maaş Ödemesi</span>
+                                {% elif h.islem_tipi == 'basit_avans' %}
+                                    <span class="badge bg-warning text-dark">Elden Avans</span>
+                                {% elif h.islem_tipi == 'alisveris' %}
+                                    <span class="badge bg-info text-dark">Alışveriş</span>
+                                {% elif h.islem_tipi == 'kasa_acigi' %}
+                                    <span class="badge bg-danger">Kasa Açığı</span>
+                                {% elif h.islem_tipi == 'prim' %}
+                                    <span class="badge bg-primary">Prim/Bonus</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ h.get_islem_tipi_display }}</span>
+                                {% endif %}
+                            </td>
+                            
+                            <td class="fw-bold {% if h.islem_tipi == 'prim' or h.islem_tipi == 'maas_odemesi' %}text-success{% else %}text-danger{% endif %}">
+                                {% if h.islem_tipi == 'prim' or h.islem_tipi == 'maas_odemesi' %}+{% else %}-{% endif %}{{ h.tutar }} TL
+                            </td>
+                            
+                            <td class="text-muted small">{{ h.aciklama|default:"-" }}</td>
+                            
+                            <td class="text-end">
+                                <a href="{% url 'finansal_hareket_sil' h.id %}" 
+                                   class="btn btn-sm btn-outline-danger border-0" 
+                                   onclick="return confirm('Bu işlemi silmek istediğinize emin misiniz?');"
+                                   data-bs-toggle="tooltip" 
+                                   title="İşlemi Sil">
+                                    🗑️
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-5">
+                                <div class="d-flex flex-column align-items-center">
+                                    <span class="fs-2 opacity-25">📂</span>
+                                    <span>Bu dönem için kayıtlı bir hareket bulunamadı.</span>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
-
-        {% if h.islem_tipi == 'prim' %}
-            <span class="fw-bold text-success fs-5">+{{ h.tutar }} TL</span>
-        {% else %}
-            <span class="fw-bold text-danger fs-5">-{{ h.tutar }} TL</span>
-        {% endif %}
-    </li>
-    {% empty %}
-    <li class="list-group-item text-center text-muted py-3">Henüz bir hareket yok.</li>
-    {% endfor %}
-</ul>
+    </div>
+</div>
 
 {% if avanslar %}
-<h5 class="mt-4 ms-1">Taksitli Borçlar</h5>
-<ul class="list-group shadow-sm mb-5">
-    {% for a in avanslar %}
-    <li class="list-group-item d-flex justify-content-between align-items-center">
-        <div>
-            <span>Taksitli Avans ({{ a.taksit_sayisi }} Taksit)</span>
-            <br>
-            <small class="text-muted">Aylık Kesinti: {{ a.aylik_kesinti|stringformat:".2f" }} TL</small>
-        </div>
-        
-        {% if a.tamamlandi %}
-            <span class="badge bg-success">Ödendi</span>
-        {% else %}
-            <span class="badge bg-warning text-dark">Devam Ediyor</span>
-        {% endif %}
-    </li>
-    {% endfor %}
-</ul>
+<div class="card shadow-sm mb-5 border-warning border-2">
+    <div class="card-header bg-warning text-dark fw-bold d-flex align-items-center gap-2">
+        <span>⚠️ Taksitli Borçlar</span>
+        <small class="fw-normal">(Genel Durum)</small>
+    </div>
+    <ul class="list-group list-group-flush">
+        {% for a in avanslar %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+            <div>
+                <span class="fw-bold text-dark">Taksitli Avans ({{ a.taksit_sayisi }} Taksit)</span>
+                <br>
+                <small class="text-muted">Aylık Kesinti: <strong>{{ a.aylik_kesinti|stringformat:".2f" }} TL</strong></small>
+                <small class="text-muted ms-2"> | Toplam: {{ a.toplam_tutar }} TL</small>
+            </div>
+            
+            {% if a.tamamlandi %}
+                <span class="badge bg-success rounded-pill">Ödendi</span>
+            {% else %}
+                <span class="badge bg-warning text-dark rounded-pill">Devam Ediyor</span>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+</div>
 {% endif %}
 
 <div style="height: 50px;"></div>
+
+<script>
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+      return new bootstrap.Tooltip(tooltipTriggerEl)
+    })
+</script>
+
 {% endblock %}

@@ -2,25 +2,53 @@
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h3 class="fw-bold text-primary m-0">💰 Maaş Bordrosu</h3>
+    <div>
+        <h3 class="fw-bold text-primary m-0">💰 Maaş Bordrosu</h3>
+        {% if bordro_var_mi %}
+            <span class="badge bg-success mt-1">✅ Kesinleşmiş Bordro (Kilitli)</span>
+        {% else %}
+            <span class="badge bg-warning text-dark mt-1">⚠️ Taslak Görünüm (Canlı Hesaplama)</span>
+        {% endif %}
+    </div>
+    
     <div class="text-end">
         <small class="text-muted d-block">Toplam Ödenecek:</small>
         <span class="h3 fw-bold text-success">{{ genel_toplam|stringformat:".2f" }} TL</span>
     </div>
 </div>
 
-<form method="GET" class="card p-3 mb-4 bg-light shadow-sm d-flex flex-row align-items-center justify-content-between">
-    <div class="d-flex align-items-center gap-2">
-        <label class="fw-bold">Dönem Seç:</label>
-        <input type="number" name="ay" class="form-control" value="{{ ay }}" min="1" max="12" style="width: 70px;">
-        <input type="number" name="yil" class="form-control" value="{{ yil }}" style="width: 100px;">
-        <button type="submit" class="btn btn-primary">Hesapla</button>
+<div class="card p-3 mb-4 bg-light shadow-sm">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+        
+        <form method="GET" class="d-flex align-items-center gap-2">
+            <label class="fw-bold text-nowrap">Dönem Seç:</label>
+            <input type="number" name="ay" class="form-control" value="{{ ay }}" min="1" max="12" style="width: 70px;">
+            <input type="number" name="yil" class="form-control" value="{{ yil }}" style="width: 100px;">
+            <button type="submit" class="btn btn-primary">Hesapla</button>
+        </form>
+
+        <div class="d-flex align-items-center gap-2">
+            <a href="{% url 'maas_raporu_indir' %}?ay={{ ay }}&yil={{ yil }}" class="btn btn-success fw-bold">
+                📊 Excel İndir
+            </a>
+
+            {% if not bordro_var_mi %}
+                <form action="{% url 'maas_bordrosu_olustur' %}" method="POST" onsubmit="return confirm('⚠️ DİKKAT: {{ ay }}/{{ yil }} dönemini kapatmak üzeresiniz.\n\nBu işlemden sonra personel maaşları değişse bile bu aydaki kayıtlar sabit kalacaktır.\nOnaylıyor musunuz?');">
+                    {% csrf_token %}
+                    <input type="hidden" name="ay" value="{{ ay }}">
+                    <input type="hidden" name="yil" value="{{ yil }}">
+                    <button type="submit" class="btn btn-danger fw-bold">
+                        🔒 Ayı Kapat / Kesinleştir
+                    </button>
+                </form>
+            {% else %}
+                <button class="btn btn-secondary fw-bold" disabled>
+                    🔒 Dönem Kapatıldı
+                </button>
+            {% endif %}
+        </div>
     </div>
-    
-    <a href="{% url 'maas_raporu_indir' %}?ay={{ ay }}&yil={{ yil }}" class="btn btn-success fw-bold">
-        📊 Excel Olarak İndir
-    </a>
-</form>
+</div>
 
 <div class="table-responsive shadow-sm border-0">
     <table class="table table-striped table-hover align-middle border text-center mb-0">
@@ -97,8 +125,18 @@
     </table>
 </div>
 
-<div class="alert alert-warning mt-3 shadow-sm border-0">
-    <small>ℹ️ <strong>Bilgi:</strong> 'Hakediş' sütununda aylık personelin gelmediği günlerin kesintisi otomatik yapılmıştır. Mesai (TL) sütunu, saatlik ücrete göre hesaplanır.</small>
+<div class="alert alert-info mt-3 shadow-sm border-0">
+    <div class="d-flex gap-2 align-items-center">
+        <span class="fs-4">ℹ️</span>
+        <div>
+            <strong>Bilgi:</strong> 
+            {% if bordro_var_mi %}
+                Bu dönem <strong>kesinleşmiştir.</strong> Personel maaşında yapılan değişiklikler bu raporu etkilemez.
+            {% else %}
+                Bu <strong>taslak</strong> görünümdür. Maaş değişiklikleri anlık olarak yansır. Ay sonunda <strong>"Ayı Kapat"</strong> butonuna basarak verileri sabitleyebilirsiniz.
+            {% endif %}
+        </div>
+    </div>
 </div>
 
 <div style="height: 50px;"></div>
