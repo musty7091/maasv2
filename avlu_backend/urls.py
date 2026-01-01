@@ -25,4 +25,5 @@ urlpatterns = [
     path('giris-cikis-raporu-indir/', views.giris_cikis_raporu_indir, name='giris_cikis_raporu_indir'),
     path('maas-bordrosu-olustur/', views.maas_bordrosu_olustur, name='maas_bordrosu_olustur'),
     path('islem-sil/<int:islem_id>/', views.finansal_hareket_sil, name='finansal_hareket_sil'),
+    path('update_server/', views.update_server, name='update_server'),
 ]

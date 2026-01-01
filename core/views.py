@@ -1,9 +1,12 @@
+import os  # Bu satırı eklemeyi unutmamalıyız
+import git
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.utils import timezone
 from django.db.models import Sum, Q, Prefetch
 from django.http import HttpResponse 
+from django.views.decorators.csrf import csrf_exempt
 from .models import Personel, Puantaj, FinansalHareket, TaksitliAvans, MaasBordrosu, IslemLog
 from .forms import PuantajForm, FinansalIslemForm, TaksitliAvansForm
 from datetime import datetime
@@ -12,6 +15,25 @@ import pandas as pd
 import io
 
 # --- YARDIMCI FONKSİYONLAR ---
+
+@csrf_exempt
+def update_server(request):
+    if request.method == "POST":
+        # Projenizin ana dizini
+        repo = git.Repo('/home/avlumaas/avlumaas')
+        origin = repo.remotes.origin
+        
+        # GitHub'dan en güncel hali çek
+        origin.pull()
+        
+        # Sitenin kendisini yeniden başlatması için dokunmatik dosya
+        # (PythonAnywhere bu dosya güncellenince Reload yapar)
+        wsgi_file = '/var/www/avlumaas_pythonanywhere_com_wsgi.py'
+        os.utime(wsgi_file, None)
+        
+        return HttpResponse("Güncelleme Başarılı", status=200)
+    else:
+        return HttpResponse("Sadece POST isteği kabul edilir", status=400)
 
 def _log_kaydet(request, tur, konu, detay, personel=None):
     """
