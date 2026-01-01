@@ -307,37 +307,85 @@ def finansal_hareket_sil(request, islem_id):
     messages.success(request, 'İşlem başarıyla silindi.')
     return redirect('personel_detay', personel_id=personel.id)
 
-@login_required
 def yoklama_al(request):
     secilen_tarih_str = request.GET.get('tarih')
     if secilen_tarih_str:
-        secilen_tarih = datetime.strptime(secilen_tarih_str, '%Y-%m-%d').date()
+        try:
+            secilen_tarih = datetime.strptime(secilen_tarih_str, '%Y-%m-%d').date()
+        except ValueError:
+            secilen_tarih = timezone.now().date()
+            messages.error(request, "Geçersiz tarih formatı. Bugünün tarihi seçildi.")
     else:
         secilen_tarih = timezone.now().date()
 
     personeller = Personel.objects.filter(aktif_mi=True)
 
+    def _parse_hhmm(value: str):
+        """'HH:MM' -> datetime.time. Boş/None gelirse None döner."""
+        if not value:
+            return None
+        value = value.strip()
+        # Kullanıcı '0900' gibi girerse '09:00' yap
+        only_digits = ''.join(ch for ch in value if ch.isdigit())
+        if len(only_digits) == 4 and ':' not in value:
+            value = only_digits[:2] + ':' + only_digits[2:]
+        return datetime.strptime(value, '%H:%M').time()
+
     if request.method == 'POST':
         personel_id = request.POST.get('personel_id')
-        durum = request.POST.get('durum')
-        giris = request.POST.get('giris_saati')
-        cikis = request.POST.get('cikis_saati')
+        durum = (request.POST.get('durum') or '').strip()
+        giris_raw = (request.POST.get('giris_saati') or '').strip()
+        cikis_raw = (request.POST.get('cikis_saati') or '').strip()
 
-        kayit_tarihi_str = request.POST.get('kayit_tarihi')
-        kayit_tarihi = datetime.strptime(kayit_tarihi_str, '%Y-%m-%d').date()
+        kayit_tarihi_str = request.POST.get('kayit_tarihi') or ''
+        try:
+            kayit_tarihi = datetime.strptime(kayit_tarihi_str, '%Y-%m-%d').date()
+        except ValueError:
+            messages.error(request, "Kayıt tarihi okunamadı. Lütfen tekrar deneyin.")
+            return redirect(f'/yoklama/?tarih={secilen_tarih}')
+
+        if not personel_id:
+            messages.error(request, "Personel seçimi bulunamadı.")
+            return redirect(f'/yoklama/?tarih={kayit_tarihi}')
 
         personel = get_object_or_404(Personel, id=personel_id)
 
-        puantaj, created = Puantaj.objects.get_or_create(
+        # Durum seçilmediyse kayıt yapma
+        if not durum:
+            messages.warning(request, f"{personel.ad} için durum seçilmedi. Kayıt yapılmadı.")
+            return redirect(f'/yoklama/?tarih={kayit_tarihi}')
+
+        puantaj, _created = Puantaj.objects.get_or_create(
             personel=personel,
             tarih=kayit_tarihi
         )
         puantaj.durum = durum
-        puantaj.giris_saati = giris if giris else None
-        puantaj.cikis_saati = cikis if cikis else None
+
+        # Saatler sadece belirli durumlarda aktif olsun
+        saat_gerekli = durum in ('geldi', 'hafta_tatili')
+
+        if saat_gerekli:
+            try:
+                giris = _parse_hhmm(giris_raw)
+                cikis = _parse_hhmm(cikis_raw)
+            except ValueError:
+                messages.error(request, "Saat formatı hatalı. Örn: 09:00")
+                return redirect(f'/yoklama/?tarih={kayit_tarihi}')
+
+            # Basit mantık kontrolü
+            if giris and cikis and cikis <= giris:
+                messages.error(request, "Çıkış saati, giriş saatinden sonra olmalıdır.")
+                return redirect(f'/yoklama/?tarih={kayit_tarihi}')
+
+            puantaj.giris_saati = giris
+            puantaj.cikis_saati = cikis
+        else:
+            puantaj.giris_saati = None
+            puantaj.cikis_saati = None
+
         puantaj.save()
 
-        messages.success(request, f'{personel.ad} güncellendi.')
+        messages.success(request, f'{personel.ad} için {kayit_tarihi.strftime("%d/%m/%Y")} yoklaması kaydedildi.')
         return redirect(f'/yoklama/?tarih={kayit_tarihi}')
 
     gunun_kayitlari = {p.personel_id: p for p in Puantaj.objects.filter(tarih=secilen_tarih)}
@@ -345,10 +393,7 @@ def yoklama_al(request):
     list_data = []
     for p in personeller:
         kayit = gunun_kayitlari.get(p.id)
-        list_data.append({
-            'personel': p,
-            'kayit': kayit
-        })
+        list_data.append({'personel': p, 'kayit': kayit})
 
     return render(request, 'core/yoklama.html', {
         'list_data': list_data,

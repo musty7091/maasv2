@@ -50,17 +50,16 @@
                 </div>
 
                 <div class="col-md-2 col-3">
-                    <input type="text" name="giris_saati" 
-                           class="form-control form-control-sm text-center saat-input" 
-                           placeholder="" maxlength="5"
-                           value="{% if item.kayit and item.kayit.giris_saati %}{{ item.kayit.giris_saati|date:'H:i' }}{% endif %}">
+                    <input type="time" name="giris_saati"
+                            class="form-control form-control-sm text-center saat-input"
+                            value="{% if item.kayit and item.kayit.giris_saati %}{{ item.kayit.giris_saati|date:'H:i' }}{% endif %}">
+
                 </div>
 
                 <div class="col-md-2 col-3">
-                    <input type="text" name="cikis_saati" 
-                           class="form-control form-control-sm text-center saat-input" 
-                           placeholder="" maxlength="5"
-                           value="{% if item.kayit and item.kayit.cikis_saati %}{{ item.kayit.cikis_saati|date:'H:i' }}{% endif %}">
+                    <input type="time" name="cikis_saati"
+                            class="form-control form-control-sm text-center saat-input"
+                            value="{% if item.kayit and item.kayit.cikis_saati %}{{ item.kayit.cikis_saati|date:'H:i' }}{% endif %}">
                 </div>
 
                 <div class="col-md-3 col-12 d-flex align-items-center justify-content-between">
