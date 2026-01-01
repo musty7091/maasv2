@@ -1,14 +1,25 @@
-import os  # Bu satırı eklemeyi unutmamalıyız
-import git
+import os
+import hmac
+import hashlib
+from typing import Optional
+
+try:
+    import git  # type: ignore
+except ImportError:
+    git = None  # git modülü yoksa sistem çalışmaya devam etsin
+
+from django.conf import settings
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.utils import timezone
 from django.db.models import Sum, Q, Prefetch
-from django.http import HttpResponse 
+from django.http import HttpResponse, HttpResponseForbidden
 from django.views.decorators.csrf import csrf_exempt
+
 from .models import Personel, Puantaj, FinansalHareket, TaksitliAvans, MaasBordrosu, IslemLog
 from .forms import PuantajForm, FinansalIslemForm, TaksitliAvansForm
+
 from datetime import datetime
 import calendar
 import pandas as pd
@@ -18,22 +29,48 @@ import io
 
 @csrf_exempt
 def update_server(request):
-    if request.method == "POST":
-        # Projenizin ana dizini
-        repo = git.Repo('/home/avlumaas/avlumaas')
-        origin = repo.remotes.origin
-        
-        # GitHub'dan en güncel hali çek
-        origin.pull()
-        
-        # Sitenin kendisini yeniden başlatması için dokunmatik dosya
-        # (PythonAnywhere bu dosya güncellenince Reload yapar)
-        wsgi_file = '/var/www/avlumaas_pythonanywhere_com_wsgi.py'
-        os.utime(wsgi_file, None)
-        
-        return HttpResponse("Güncelleme Başarılı", status=200)
-    else:
+    """
+    PythonAnywhere üzerindeki deployment için kullanılabilir.
+    Güvenlik: Token doğrulaması şart.
+    """
+    if request.method != "POST":
         return HttpResponse("Sadece POST isteği kabul edilir", status=400)
+
+    # 1) Token kontrolü (X-Update-Token header'ı ile)
+    expected_token = getattr(settings, "UPDATE_SERVER_TOKEN", None) or os.environ.get("UPDATE_SERVER_TOKEN")
+    provided_token = request.headers.get("X-Update-Token") or request.POST.get("token")
+
+    if not expected_token:
+        # Token tanımlı değilse bu endpoint kapalı sayılır
+        return HttpResponseForbidden("Update token tanımlı değil (endpoint pasif).")
+
+    if not provided_token:
+        return HttpResponseForbidden("Token gerekli.")
+
+    # timing-attack'e karşı güvenli karşılaştırma
+    if not hmac.compare_digest(str(provided_token), str(expected_token)):
+        return HttpResponseForbidden("Token hatalı.")
+
+    # 2) git modülü yoksa patlama olmasın
+    if git is None:
+        return HttpResponse("Git modülü yüklü değil (python-decouple değil, GitPython gerekir).", status=500)
+
+    # 3) Repo path ve wsgi path ayarlanabilir olsun
+    repo_path = getattr(settings, "REPO_PATH", None) or os.environ.get("REPO_PATH") or "/home/avlumaas/avlumaas"
+    wsgi_file = getattr(settings, "WSGI_TOUCH_FILE", None) or os.environ.get("WSGI_TOUCH_FILE") or "/var/www/avlumaas_pythonanywhere_com_wsgi.py"
+
+    try:
+        repo = git.Repo(repo_path)
+        origin = repo.remotes.origin
+        origin.pull()
+
+        # PythonAnywhere reload trigger
+        os.utime(wsgi_file, None)
+
+        return HttpResponse("Güncelleme Başarılı", status=200)
+
+    except Exception as e:
+        return HttpResponse(f"Güncelleme Hatası: {e}", status=500)
 
 def _log_kaydet(request, tur, konu, detay, personel=None):
     """
@@ -56,19 +93,19 @@ def _maas_verilerini_hesapla(yil, ay):
     Verilen yıl ve ay için maaş verilerini getirir.
     Önce MaasBordrosu tablosuna bakar (Sabitlenmiş mi?),
     Yoksa canlı hesaplama yapar.
-    
+
     Dönüş: (bordro_var_mi, rapor_listesi)
     """
     # 1. Önce veritabanında kesinleşmiş bordro var mı diye bak
     kayitli_bordrolar = MaasBordrosu.objects.filter(donem__year=yil, donem__month=ay).select_related('personel')
-    
+
     if kayitli_bordrolar.exists():
         # --- KAYITLI VERİDEN OKUMA (SNAPSHOT) ---
         rapor_listesi = []
         for b in kayitli_bordrolar:
             # Geriye dönük ana hakediş tahmini (Gösterim tutarlılığı için)
             ana_hakedis_tahmini = float(b.net_odenecek) + float(b.toplam_kesinti) - float(b.toplam_prim) - float(b.mesai_ucreti)
-            
+
             rapor_listesi.append({
                 'personel': b.personel,
                 'calistigi_gun': b.calistigi_gun,
@@ -101,7 +138,7 @@ def _maas_verilerini_hesapla(yil, ay):
             calistigi_gun = 0
             gelmedigi_gun = 0
             toplam_mesai = 0.0
-            
+
             for pt in p.aylik_puantajlar:
                 if pt.durum in ['geldi', 'hafta_tatili']:
                     calistigi_gun += 1
@@ -128,7 +165,7 @@ def _maas_verilerini_hesapla(yil, ay):
                     toplam_prim += float(h.tutar)
                 else:
                     diger_kesintiler += float(h.tutar)
-            
+
             # Taksitler
             taksit_kesintisi = sum(float(t.aylik_kesinti) for t in p.aktif_taksitler)
 
@@ -147,7 +184,7 @@ def _maas_verilerini_hesapla(yil, ay):
                 'net_maas': net_maas,
                 'durum': 'taslak'
             })
-        
+
         return False, rapor_listesi
 
 # --- VIEW FONKSİYONLARI ---
@@ -155,11 +192,11 @@ def _maas_verilerini_hesapla(yil, ay):
 @login_required
 def ana_sayfa(request):
     bugun = timezone.now().date()
-    
+
     toplam_personel = Personel.objects.filter(aktif_mi=True).count()
     bugun_gelen = Puantaj.objects.filter(tarih=bugun, durum__in=['geldi', 'hafta_tatili']).count()
     gelmeyen = toplam_personel - bugun_gelen
-    
+
     bu_ay_avans = FinansalHareket.objects.filter(
         tarih__year=bugun.year,
         tarih__month=bugun.month,
@@ -212,16 +249,13 @@ def personel_detay(request, personel_id):
             if form.is_valid():
                 islem = form.save(commit=False)
                 islem.personel = personel
-                # İşlem tarihi modelde auto_now_add değilse formdan gelir, biz default olarak bugün atıyoruz modelde.
-                # Eğer kullanıcı spesifik bir tarihe eklemek isterse formda tarih alanı açılabilir.
-                # Şimdilik "İşlem yapıldığı anın tarihi" olarak kaydediliyor.
                 islem.save()
-                
+
                 # --- LOG EKLE ---
-                _log_kaydet(request, 'ekleme', 'Finansal Hareket', 
-                           f"{islem.tutar} TL tutarında {islem.get_islem_tipi_display()} eklendi. Açıklama: {islem.aciklama}", 
+                _log_kaydet(request, 'ekleme', 'Finansal Hareket',
+                           f"{islem.tutar} TL tutarında {islem.get_islem_tipi_display()} eklendi. Açıklama: {islem.aciklama}",
                            personel)
-                
+
                 messages.success(request, 'İşlem eklendi.')
                 return redirect(f'/personel/{personel.id}/?ay={ay}&yil={yil}')
     else:
@@ -229,7 +263,7 @@ def personel_detay(request, personel_id):
 
     # 4. VERİLERİ SADECE O AY İÇİN ÇEK (FİLTRELEME)
     hareketler = personel.finansal_hareketler.filter(
-        tarih__year=yil, 
+        tarih__year=yil,
         tarih__month=ay
     ).order_by('-tarih')
 
@@ -254,21 +288,21 @@ def finansal_hareket_sil(request, islem_id):
     """
     islem = get_object_or_404(FinansalHareket, id=islem_id)
     personel = islem.personel
-    
+
     # --- GÜVENLİK: BORDRO KONTROLÜ ---
     if MaasBordrosu.objects.filter(
-        personel=personel, 
-        donem__year=islem.tarih.year, 
+        personel=personel,
+        donem__year=islem.tarih.year,
         donem__month=islem.tarih.month
     ).exists():
         messages.error(request, f"⛔ HATA: {islem.tarih.strftime('%B %Y')} dönemi kapatıldığı için bu işlem silinemez!")
         return redirect('personel_detay', personel_id=personel.id)
-    
+
     # --- LOG EKLE ---
-    _log_kaydet(request, 'silme', 'Finansal Hareket', 
-               f"{islem.tutar} TL tutarında {islem.get_islem_tipi_display()} silindi. Tarih: {islem.tarih}", 
+    _log_kaydet(request, 'silme', 'Finansal Hareket',
+               f"{islem.tutar} TL tutarında {islem.get_islem_tipi_display()} silindi. Tarih: {islem.tarih}",
                personel)
-    
+
     islem.delete()
     messages.success(request, 'İşlem başarıyla silindi.')
     return redirect('personel_detay', personel_id=personel.id)
@@ -280,34 +314,34 @@ def yoklama_al(request):
         secilen_tarih = datetime.strptime(secilen_tarih_str, '%Y-%m-%d').date()
     else:
         secilen_tarih = timezone.now().date()
-    
+
     personeller = Personel.objects.filter(aktif_mi=True)
-    
+
     if request.method == 'POST':
         personel_id = request.POST.get('personel_id')
         durum = request.POST.get('durum')
         giris = request.POST.get('giris_saati')
         cikis = request.POST.get('cikis_saati')
-        
+
         kayit_tarihi_str = request.POST.get('kayit_tarihi')
         kayit_tarihi = datetime.strptime(kayit_tarihi_str, '%Y-%m-%d').date()
-        
+
         personel = get_object_or_404(Personel, id=personel_id)
-        
+
         puantaj, created = Puantaj.objects.get_or_create(
-            personel=personel, 
+            personel=personel,
             tarih=kayit_tarihi
         )
         puantaj.durum = durum
         puantaj.giris_saati = giris if giris else None
         puantaj.cikis_saati = cikis if cikis else None
         puantaj.save()
-        
+
         messages.success(request, f'{personel.ad} güncellendi.')
         return redirect(f'/yoklama/?tarih={kayit_tarihi}')
 
     gunun_kayitlari = {p.personel_id: p for p in Puantaj.objects.filter(tarih=secilen_tarih)}
-    
+
     list_data = []
     for p in personeller:
         kayit = gunun_kayitlari.get(p.id)
@@ -317,14 +351,14 @@ def yoklama_al(request):
         })
 
     return render(request, 'core/yoklama.html', {
-        'list_data': list_data, 
+        'list_data': list_data,
         'secilen_tarih': secilen_tarih
     })
 
 @login_required
 def toplu_puantaj(request, personel_id):
     personel = get_object_or_404(Personel, id=personel_id)
-    
+
     bugun = timezone.now().date()
     try:
         yil = int(request.GET.get('yil', bugun.year))
@@ -332,18 +366,18 @@ def toplu_puantaj(request, personel_id):
     except ValueError:
         yil = bugun.year
         ay = bugun.month
-    
+
     _, son_gun = calendar.monthrange(yil, ay)
-    
+
     if request.method == 'POST':
         for day in range(1, son_gun + 1):
             tarih_str = f"{yil}-{ay:02d}-{day:02d}"
             tarih_obj = datetime.strptime(tarih_str, '%Y-%m-%d').date()
-            
+
             durum = request.POST.get(f'durum_{tarih_str}')
             giris = request.POST.get(f'giris_{tarih_str}')
             cikis = request.POST.get(f'cikis_{tarih_str}')
-            
+
             if not durum: continue
 
             puantaj, created = Puantaj.objects.get_or_create(
@@ -354,20 +388,20 @@ def toplu_puantaj(request, personel_id):
             puantaj.giris_saati = giris if giris else None
             puantaj.cikis_saati = cikis if cikis else None
             puantaj.save()
-            
+
         messages.success(request, f'{personel.ad} için {ay}/{yil} kayıtları güncellendi.')
         return redirect(f'/personel/{personel.id}/toplu-puantaj/?ay={ay}&yil={yil}')
 
     mevcut_kayitlar = {
-        p.tarih.day: p 
+        p.tarih.day: p
         for p in Puantaj.objects.filter(personel=personel, tarih__year=yil, tarih__month=ay)
     }
-    
+
     gunler_listesi = []
     for day in range(1, son_gun + 1):
         tarih_obj = datetime(yil, ay, day).date()
         kayit = mevcut_kayitlar.get(day)
-        
+
         gunler_listesi.append({
             'tarih': tarih_obj,
             'tarih_str': f"{yil}-{ay:02d}-{day:02d}",
@@ -395,7 +429,7 @@ def maas_raporu(request):
 
     # Tek merkezden verileri çek (Kayıtlı mı yoksa Canlı mı otomatik anlar)
     bordro_var_mi, rapor_listesi = _maas_verilerini_hesapla(yil, ay)
-    
+
     genel_toplam_odenecek = sum(item['net_maas'] for item in rapor_listesi)
 
     return render(request, 'core/maas_raporu.html', {
@@ -417,17 +451,17 @@ def maas_bordrosu_olustur(request):
     if not request.user.is_superuser:
         messages.error(request, "Bu işlemi yapmak için 'Süper Yönetici' yetkisine sahip olmalısınız!")
         return redirect('maas_raporu')
-    
+
     if request.method != 'POST':
         return redirect('maas_raporu')
-        
+
     bugun = timezone.now().date()
     try:
         yil = int(request.POST.get('yil', bugun.year))
         ay = int(request.POST.get('ay', bugun.month))
     except ValueError:
         return redirect('maas_raporu')
-    
+
     # Canlı hesaplama yaparak kaydet (Snapshot)
     puantaj_query = Puantaj.objects.filter(tarih__year=yil, tarih__month=ay)
     hareket_query = FinansalHareket.objects.filter(tarih__year=yil, tarih__month=ay)
@@ -438,17 +472,17 @@ def maas_bordrosu_olustur(request):
         Prefetch('finansal_hareketler', queryset=hareket_query, to_attr='aylik_hareketler'),
         Prefetch('taksitli_avanslar', queryset=taksit_query, to_attr='aktif_taksitler')
     )
-    
+
     donem_tarihi = datetime(yil, ay, 1).date()
     created_count = 0
     updated_count = 0
-    
+
     for p in personeller:
         # --- HESAPLAMA (LIVE) ---
         calistigi_gun = 0
         gelmedigi_gun = 0
         toplam_mesai = 0.0
-        
+
         for pt in p.aylik_puantajlar:
             if pt.durum in ['geldi', 'hafta_tatili']:
                 calistigi_gun += 1
@@ -457,7 +491,7 @@ def maas_bordrosu_olustur(request):
             toplam_mesai += float(pt.hesaplanan_mesai_saati)
 
         mesai_ucreti = toplam_mesai * float(p.ozel_mesai_ucreti)
-        
+
         # Finansal
         toplam_prim = 0.0
         diger_kesintiler = 0.0
@@ -466,10 +500,10 @@ def maas_bordrosu_olustur(request):
                 toplam_prim += float(h.tutar)
             else:
                 diger_kesintiler += float(h.tutar)
-        
+
         taksit_kesintisi = sum(float(t.aylik_kesinti) for t in p.aktif_taksitler)
         toplam_kesinti = diger_kesintiler + taksit_kesintisi
-        
+
         # Maaş
         if p.calisma_tipi == 'aylik':
             gunluk_maliyet = float(p.maas_tutari) / 30
@@ -477,9 +511,9 @@ def maas_bordrosu_olustur(request):
             ana_hakedis = float(p.maas_tutari) - maas_kesintisi
         else:
             ana_hakedis = float(p.maas_tutari) * calistigi_gun
-            
+
         net_maas = ana_hakedis + mesai_ucreti + toplam_prim - toplam_kesinti
-        
+
         # --- KAYDETME (SNAPSHOT) ---
         obj, created = MaasBordrosu.objects.update_or_create(
             personel=p,
@@ -501,7 +535,7 @@ def maas_bordrosu_olustur(request):
             updated_count += 1
 
     # --- LOG EKLE ---
-    _log_kaydet(request, 'kritik', 'Bordro Kesinleştirme', 
+    _log_kaydet(request, 'kritik', 'Bordro Kesinleştirme',
                f"{calendar.month_name[ay]} {yil} dönemi kapatıldı. ({created_count} yeni, {updated_count} güncellendi)")
 
     messages.success(request, f"{calendar.month_name[ay]} {yil} dönemi için Bordro oluşturuldu. ({created_count} yeni, {updated_count} güncellendi)")
@@ -540,7 +574,7 @@ def maas_raporu_indir(request):
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name=f'{ay}-{yil} Maas Raporu')
-    
+
     buffer.seek(0)
     response = HttpResponse(buffer, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     response['Content-Disposition'] = f'attachment; filename="Maas_Raporu_{ay}_{yil}.xlsx"'
@@ -550,12 +584,12 @@ def maas_raporu_indir(request):
 def personel_import(request):
     if request.method == 'POST' and request.FILES.get('excel_file'):
         excel_file = request.FILES['excel_file']
-        
+
         try:
             df = pd.read_excel(excel_file)
             basarili = 0
             atlanan = 0
-            
+
             for index, row in df.iterrows():
                 try:
                     tc = str(row['TC No']).strip()
@@ -565,7 +599,7 @@ def personel_import(request):
 
                     c_tipi_raw = str(row['Çalışma Tipi']).lower()
                     c_tipi = 'gunluk' if 'gün' in c_tipi_raw else 'aylik'
-                    
+
                     tarih_val = row['Giriş Tarihi']
                     if pd.isna(tarih_val):
                         tarih_obj = timezone.now().date()
@@ -588,7 +622,7 @@ def personel_import(request):
                 except Exception as e:
                     print(f"Satır hatası: {e}")
                     atlanan += 1
-            
+
             messages.success(request, f"{basarili} personel başarıyla eklendi. {atlanan} kayıt atlandı.")
             return redirect('personel_listesi')
 
@@ -601,11 +635,11 @@ def personel_import(request):
 def download_excel_template(request):
     columns = ['Ad', 'Soyad', 'TC No', 'Telefon', 'Çalışma Tipi', 'Maaş', 'Mesai Ücreti', 'Giriş Tarihi', 'IBAN', 'Banka']
     df = pd.DataFrame(columns=columns)
-    
+
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Personel Listesi')
-    
+
     buffer.seek(0)
     response = HttpResponse(buffer, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     response['Content-Disposition'] = 'attachment; filename="personel_sablon.xlsx"'
@@ -624,19 +658,19 @@ def personel_pusula(request, personel_id):
 
     # Pusula için de önce bordro kontrolü (Bordro varsa ondan oku, yoksa canlı hesapla)
     bordro = MaasBordrosu.objects.filter(personel=personel, donem__year=yil, donem__month=ay).first()
-    
+
     if bordro:
         # --- BORDRODAN OKUMA ---
         calistigi_gun = bordro.calistigi_gun
         gelmedigi_gun = bordro.gelmedigi_gun
         toplam_mesai = bordro.mesai_saati
         mesai_ucreti = bordro.mesai_ucreti
-        
+
         ana_hakedis = float(bordro.net_odenecek) + float(bordro.toplam_kesinti) - float(bordro.toplam_prim) - float(bordro.mesai_ucreti)
         toplam_prim = bordro.toplam_prim
         toplam_kesinti = bordro.toplam_kesinti
         net_maas = bordro.net_odenecek
-        
+
         # Detay listeler için yine hareket tablosuna bakıyoruz
         tum_hareketler = FinansalHareket.objects.filter(personel=personel, tarih__year=yil, tarih__month=ay).order_by('tarih')
         primler_listesi = tum_hareketler.filter(islem_tipi='prim')
@@ -661,10 +695,10 @@ def personel_pusula(request, personel_id):
         tum_hareketler = FinansalHareket.objects.filter(personel=personel, tarih__year=yil, tarih__month=ay).order_by('tarih')
         primler_listesi = tum_hareketler.filter(islem_tipi='prim')
         toplam_prim = primler_listesi.aggregate(Sum('tutar'))['tutar__sum'] or 0
-        
+
         kesintiler_listesi = tum_hareketler.exclude(islem_tipi='prim')
         diger_kesintiler = kesintiler_listesi.aggregate(Sum('tutar'))['tutar__sum'] or 0
-        
+
         taksitler = TaksitliAvans.objects.filter(personel=personel, tamamlandi=False)
         taksit_kesintisi = taksitler.aggregate(Sum('aylik_kesinti'))['aylik_kesinti__sum'] or 0
 
@@ -711,7 +745,7 @@ def giris_cikis_raporu(request):
             tarih__month=ay,
             personel_id=secilen_personel_id
         ).select_related('personel').order_by('tarih')
-        
+
         try:
             secilen_personel_id = int(secilen_personel_id)
         except ValueError:
@@ -745,7 +779,7 @@ def giris_cikis_raporu_indir(request):
             tarih__month=ay,
             personel_id=secilen_personel_id
         ).select_related('personel').order_by('tarih')
-    
+
     data = []
     for k in kayitlar:
         giris = k.giris_saati.strftime('%H:%M') if k.giris_saati else '-'
@@ -765,7 +799,7 @@ def giris_cikis_raporu_indir(request):
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         sheet_name = f'Giris_Cikis_{ay}_{yil}'
         df.to_excel(writer, index=False, sheet_name=sheet_name)
-    
+
     buffer.seek(0)
     response = HttpResponse(buffer, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     response['Content-Disposition'] = f'attachment; filename="Giris_Cikis_Raporu_{ay}_{yil}.xlsx"'
