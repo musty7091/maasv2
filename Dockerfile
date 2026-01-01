@@ -1,25 +1,24 @@
-# 1. Python Sürümü (Hafif sürüm)
+# 1. Python Sürümü
 FROM python:3.10-slim
 
-# 2. Python ayarları (Logları anlık görmek için şart)
+# 2. Ayarlar
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
-# 3. Çalışma klasörünü ayarla
+# 3. Klasör
 WORKDIR /app
 
-# 4. Gerekli kütüphaneleri yükle
+# 4. Kütüphaneler
 COPY requirements.txt /app/
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-# 5. Proje dosyalarını kopyala
+# 5. Dosyalar
 COPY . /app/
 
-# 6. Port Değişkeni (Google Cloud için)
+# 6. Port
 ENV PORT 8080
 
-# 7. BAŞLATMA KOMUTU (SİHİRLİ SATIR BURASI) ⚠️
-# Bu satır olmazsa "Listen" hatası alırsınız.
-# Siteyi 0.0.0.0 adresinden dış dünyaya açar.
-CMD exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 0 avlu_backend.wsgi:application
+# 7. BAŞLATMA KOMUTU (SİHİRLİ KISIM - GÜNCELLENDİ) ⚠️
+# Önce 'migrate' ile tabloları kurar, sonra siteyi açar.
+CMD python manage.py migrate && exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 0 avlu_backend.wsgi:application
